@@ -1,0 +1,92 @@
+x-qwen-template: &qwen-template
+  build:
+    context: ./qwen
+    dockerfile: Dockerfile
+  image: fif-qwen-image
+  command: >
+    --model Qwen/Qwen3-VL-8B-Instruct --trust-remote-code --gpu-memory-utilization 0.9 --max-model-len 16384 --enable-prefix-caching
+  networks:
+    - network
+  shm_size: '16gb'
+  volumes:
+    - ./qwen:/app
+    - ./qwen/hf_models:/root/.cache/huggingface
+    - ./dataset:/dataset
+    - ./global:/shared:ro
+  environment: &qwen-env
+    MODEL_PATH: "Qwen/Qwen3-VL-8B-Instruct"
+    HF_HOME: "/root/.cache/huggingface"
+    NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+    PYTHONPATH: "/shared:/shared"
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            capabilities: [ gpu ]
+  tty: true
+  stdin_open: true
+
+services:
+  graph:
+    build:
+      context: ./graph
+      dockerfile: Dockerfile
+    container_name: fif-graph
+    networks:
+      - network
+    image: fif-graph-image
+    volumes:
+      - ./graph:/app
+      - ./dataset:/dataset
+      - ./global:/shared:ro
+    environment:
+      PYTHONPATH: "/shared:/shared"
+    tty: true
+    stdin_open: true
+
+  qwen-worker-0:
+    <<: *qwen-template
+    container_name: fif-qwen-worker-0
+    environment:
+      <<: *qwen-env
+      CUDA_VISIBLE_DEVICES: "0"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: [ '1' ]
+              capabilities: [ gpu ]
+
+  qwen-worker-1:
+    <<: *qwen-template
+    container_name: fif-qwen-worker-1
+    environment:
+      <<: *qwen-env
+      CUDA_VISIBLE_DEVICES: "0"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: [ '2' ]
+              capabilities: [ gpu ]
+
+  qwen-worker-2:
+    <<: *qwen-template
+    container_name: fif-qwen-worker-2
+    environment:
+      <<: *qwen-env
+      CUDA_VISIBLE_DEVICES: "0"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: [ '3' ]
+              capabilities: [ gpu ]
+
+networks:
+  network:
+    driver: bridge

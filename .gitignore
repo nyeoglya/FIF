@@ -1,0 +1,22 @@
+# cache
+**/__pycache__
+
+# dataset
+dataset/
+crawler/crawled_*
+crawler/MMQA_dev.jsonl
+*.lgraph
+
+# process file
+lilac_*.json
+lilac_*.jsonl
+
+# log files
+*.log
+
+# model files
+hf_models
+hf_cache
+
+# sensitive info
+**/env.py

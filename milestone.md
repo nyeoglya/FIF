@@ -1,11 +1,14 @@
-1. document summarization & embedding
+1. document summarization & embedding => In Progress
+- Summarization => In Progress
+- Embedding => Current Working
 
-2. structured memory
+2. structured memory configuration => Current Working
 - history((action, anchor doc, comp, subquery, ) list)
 
 3. traverser: want to find subquery q-relevant component
 - hop
-- llm-reasoning: 
+- vector search
+- llm-reasoning
 
 4. subquery planner
 - given full history, generate new subqueries
@@ -19,6 +22,10 @@
 
 7. orchestrator
 - make strategy tuple(hop scope, scoring granularity, reasoning)
-- - select hop scope: local/global
-- - select granularity: select granularity where the similarity score is calculated
-- - llm reasoning: use llm based reasoning to accurately rerank components with q beyond vector scores.
+- select hop scope: local/global
+- select granularity: select granularity where the similarity score is calculated
+- llm reasoning: use llm based reasoning to accurately rerank components with q beyond vector scores.
+
+8. Evaluation
+- Retrieval
+- LLM Answer

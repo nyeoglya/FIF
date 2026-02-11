@@ -1,6 +1,9 @@
 import os
+import json
 import urllib.parse
 import typing as tp
+
+from type import JSONDict
 
 def get_clean_savepath_from_url_with_custom_extension(image_save_folder_path: str, original_url: str, extension: str) -> str:
     name_without_ext, _ = get_clean_filename_and_extension_from_url(original_url)
@@ -40,3 +43,19 @@ def get_clean_savepath(save_folderpath: str, filename: str, extension: str = "")
 def get_clean_filename(filename: str) -> str:
     clean_file_name: str = "".join([c for c in filename if c.isalnum() or c in (' ', '_', '-')]).rstrip()
     return clean_file_name
+
+def read_json_or_jsonl(file_path: str) -> tp.List[JSONDict]:
+    try:
+        if file_path.endswith('.jsonl'):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = [json.loads(line.strip()) for line in f if line.strip()]
+        elif file_path.endswith('.json'):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        else:
+            print(file_path)
+            raise ValueError("Unsupported file format. Please provide a .json or .jsonl file.")
+        return data
+    except Exception as e:
+        print(f"Error reading file {file_path}: {e}")
+        raise

@@ -1,9 +1,13 @@
+from __future__ import annotations
+
 import os
 import re
 import json
 import base64
 import pickle
+import shelve
 import asyncio
+import requests
 import typing as tp
 
 from pathlib import Path
@@ -41,7 +45,7 @@ class FIFDocument:
         return True
 
     @staticmethod
-    def load_from_ldoc_filepath(ldoc_filepath: str) -> tp.Optional["FIFDocument"]:
+    def load_from_ldoc_filepath(ldoc_filepath: str) -> tp.Optional[FIFDocument]:
         try:
             if not os.path.exists(ldoc_filepath):
                 tqdm.write("File not found.")
@@ -66,7 +70,7 @@ class FIFDocument:
             return None
 
     @staticmethod
-    def load_from_filepath(fif_filepath: str) -> tp.Optional["FIFDocument"]:
+    def load_from_filepath(fif_filepath: str) -> tp.Optional[FIFDocument]:
         try:
             if not os.path.exists(fif_filepath):
                 tqdm.write("File not found.")
@@ -79,130 +83,15 @@ class FIFDocument:
             tqdm.write(f"Load failed: {e}")
             return None
 
-class DocumentSummarizer:
-    def __init__(self) -> None:
-        self.image_folderpath: str = ""
-        self.image_counter: int = 0
-        self.image_link_pattern = r"\[\[([^\]]+)\]\]"
-        self.unprocessed_fif_document_list: tp.List[FIFDocument] = []
-        self.llm_server_header = {"Content-Type": "application/json"}
-        self.llm_server_payload: JSONDict = {
-            "model": "Qwen/Qwen3-VL-8B-Instruct",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": []
-                }
-            ],
-            "temperature": 0.2,
-            "repetition_penalty": 1.05,
-            "top_p": 0.85,
-            "max_tokens": 512
-        }
-    
-    def load_data_from_ldoc_folder(self, lilac_doc_folderpath: str, image_folderpath: str) -> bool:
-        assert os.path.exists(lilac_doc_folderpath)
+class DocumentSerializer:
+    def __init__(self, image_folderpath: str) -> None:
         assert os.path.exists(image_folderpath)
         
         self.image_folderpath = image_folderpath
-        
-        lilac_doc_filename_list = os.listdir(lilac_doc_folderpath)[:5]
-        for lilac_doc_filename in tqdm(lilac_doc_filename_list, desc="Loading LILaC Document"):
-            lilac_doc_filepath: str = os.path.join(lilac_doc_folderpath, lilac_doc_filename)
-            new_fif_document: tp.Optional[FIFDocument] = FIFDocument.load_from_ldoc_filepath(lilac_doc_filepath)
-            if new_fif_document:
-                self.unprocessed_fif_document_list.append(new_fif_document)
-        
-        return False
+        self.image_counter: int = 0
+        self.image_link_pattern = r"\[\[([^\]]+)\]\]"
     
-    async def _prepare_payload(self, doc: "FIFDocument") -> tp.Dict[str, tp.Any]:
-        final_text_prompt, image_filepath_list = self._serialize_document(
-            doc.document_title, doc.processed_component_list
-        )
-        encoded_images = self._serialize_images_to_base64(image_filepath_list[:5]) # TODO: VRAM Limitation
-        
-        image_content_list: tp.List[JSONDict] = [
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{data}"}}
-            for data in encoded_images
-        ]
-
-        return {
-            **self.llm_server_payload,
-            "messages": [{
-                "role": "user",
-                "content": [{"type": "text", "text": final_text_prompt}, *image_content_list]
-            }]
-        }
-
-    async def _save_to_file(self, filepath: str, data: tp.Any, lock: asyncio.Lock, is_json: bool = True):
-        async with lock:
-            with open(filepath, "a", encoding="utf-8") as f:
-                if is_json:
-                    f.write(json.dumps(data, ensure_ascii=False) + "\n")
-                else:
-                    f.write(str(data) + "\n")
-
-    async def _process_single_document(
-        self, 
-        client: httpx.AsyncClient, 
-        server_url: str, 
-        doc: "FIFDocument", 
-        semaphore: asyncio.Semaphore,
-        write_lock: asyncio.Lock,
-        result_path: str,
-        failed_path: str
-    ):
-        async with semaphore:
-            try:
-                payload = await self._prepare_payload(doc)
-                response = await client.post(
-                    server_url, 
-                    headers=self.llm_server_header, 
-                    json=payload, 
-                    timeout=180.0
-                )
-                
-                if response.status_code == 200:
-                    result_text = response.json()['choices'][0]['message']['content']
-                    save_dict: tp.Dict[str, str] = {"doc_title": doc.document_title, "summary": result_text}
-                    await self._save_to_file(result_path, save_dict, write_lock)
-                else:
-                    raise Exception(f"Server {server_url} returned {response.status_code}")
-
-            except Exception as e:
-                error_msg = f"Failed to summarize '{doc.document_title}'. Error: {e}"
-                await self._save_to_file(failed_path, error_msg, write_lock, is_json=False)
-
-    async def run_parallel_summarize(self, llm_server_list: tp.List[str], llm_result_filepath: str, failed_filepath: str) -> bool:
-        assert self.image_folderpath
-        assert self.unprocessed_fif_document_list
-        assert not os.path.exists(llm_result_filepath)
-        assert not os.path.exists(failed_filepath)
-
-        write_lock = asyncio.Lock()
-        semaphore = asyncio.Semaphore(len(llm_server_list))
-        
-        async with httpx.AsyncClient() as client:
-            tasks: tp.List[tp.Coroutine[tp.Any, tp.Any, None]] = []
-            for i, doc in enumerate(self.unprocessed_fif_document_list):
-                target_server = llm_server_list[i % len(llm_server_list)]
-                tasks.append(
-                    self._process_single_document(
-                        client, target_server, doc, semaphore, 
-                        write_lock, llm_result_filepath, failed_filepath
-                    )
-                )
-            for future in tqdm(
-                asyncio.as_completed(tasks), 
-                total=len(tasks), 
-                unit="doc", 
-                desc="Summarizing Documents"
-            ):
-                await future
-        
-        return True
-
-    def _serialize_images_to_base64(self, image_filepath_list: tp.List[str]) -> tp.List[str]:
+    def serialize_images_to_base64(self, image_filepath_list: tp.List[str]) -> tp.List[str]:
         encoded_data_list: tp.List[str] = []
         for filepath in image_filepath_list:
             path = Path(filepath)
@@ -217,7 +106,7 @@ class DocumentSummarizer:
                 continue                
         return encoded_data_list
     
-    def _serialize_document(self, document_title: str, component_list: tp.List[LightweightComponent]) -> tp.Tuple[str, tp.List[str]]:
+    def serialize_document(self, document_title: str, component_list: tp.List[LightweightComponent]) -> tp.Tuple[str, tp.List[str]]:
         self.image_counter = 0
         serialized_component_list: tp.List[str] = []
         image_filepath_list: tp.List[str] = []
@@ -293,3 +182,153 @@ class DocumentSummarizer:
         
         serialized_text += "*/\n\n"
         return serialized_text, image_path
+
+class DocumentSummarizer:
+    def __init__(self, document_serializer: DocumentSerializer) -> None:
+        self.document_serializer: DocumentSerializer = document_serializer
+        self.unprocessed_fif_document_list: tp.List[FIFDocument] = []
+        self.llm_server_header = {"Content-Type": "application/json"}
+        self.llm_server_payload: JSONDict = {
+            "model": "Qwen/Qwen3-VL-8B-Instruct",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": []
+                }
+            ],
+            "temperature": 0.2,
+            "repetition_penalty": 1.05,
+            "top_p": 0.85,
+            "max_tokens": 512
+        }
+    
+    def load_data_from_ldoc_folder(self, lilac_doc_folderpath: str) -> bool:
+        assert os.path.exists(lilac_doc_folderpath)
+        
+        lilac_doc_filename_list = os.listdir(lilac_doc_folderpath)
+        for lilac_doc_filename in tqdm(lilac_doc_filename_list, desc="Loading LILaC Document"):
+            lilac_doc_filepath: str = os.path.join(lilac_doc_folderpath, lilac_doc_filename)
+            new_fif_document: tp.Optional[FIFDocument] = FIFDocument.load_from_ldoc_filepath(lilac_doc_filepath)
+            if new_fif_document:
+                self.unprocessed_fif_document_list.append(new_fif_document)
+        
+        return False
+    
+    async def _prepare_payload(self, doc: "FIFDocument") -> tp.Dict[str, tp.Any]:
+        final_text_prompt, image_filepath_list = self.document_serializer.serialize_document(
+            doc.document_title, doc.processed_component_list
+        )
+        encoded_images = self.document_serializer.serialize_images_to_base64(image_filepath_list[:5]) # TODO: VRAM Limitation
+        
+        image_content_list: tp.List[JSONDict] = [
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{data}"}}
+            for data in encoded_images
+        ]
+
+        return {
+            **self.llm_server_payload,
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": final_text_prompt}, *image_content_list]
+            }]
+        }
+
+    async def _save_to_file(self, filepath: str, data: tp.Any, lock: asyncio.Lock, is_json: bool = True):
+        async with lock:
+            with open(filepath, "a", encoding="utf-8") as f:
+                if is_json:
+                    f.write(json.dumps(data, ensure_ascii=False) + "\n")
+                else:
+                    f.write(str(data) + "\n")
+
+    async def _process_single_document(
+        self, 
+        client: httpx.AsyncClient, 
+        server_url: str, 
+        doc: FIFDocument, 
+        semaphore: asyncio.Semaphore,
+        write_lock: asyncio.Lock,
+        result_path: str,
+        failed_path: str
+    ):
+        async with semaphore:
+            try:
+                payload = await self._prepare_payload(doc)
+                response = await client.post(
+                    server_url, 
+                    headers=self.llm_server_header, 
+                    json=payload, 
+                    timeout=180.0
+                )
+                
+                if response.status_code == 200:
+                    result_text = response.json()['choices'][0]['message']['content']
+                    save_dict: tp.Dict[str, str] = {"doc_title": doc.document_title, "summary": result_text}
+                    await self._save_to_file(result_path, save_dict, write_lock)
+                else:
+                    raise Exception(f"Server {server_url} returned {response.status_code}")
+
+            except Exception as e:
+                error_msg = f"Failed to summarize '{doc.document_title}'. Error: {e}"
+                await self._save_to_file(failed_path, error_msg, write_lock, is_json=False)
+
+    async def run_parallel_summarize(self, llm_server_list: tp.List[str], llm_result_filepath: str, failed_filepath: str) -> bool:
+        assert self.unprocessed_fif_document_list
+        assert not os.path.exists(llm_result_filepath)
+        assert not os.path.exists(failed_filepath)
+
+        write_lock = asyncio.Lock()
+        semaphore = asyncio.Semaphore(len(llm_server_list))
+        
+        async with httpx.AsyncClient() as client:
+            tasks: tp.List[tp.Coroutine[tp.Any, tp.Any, None]] = []
+            for i, doc in enumerate(self.unprocessed_fif_document_list):
+                target_server = llm_server_list[i % len(llm_server_list)]
+                tasks.append(
+                    self._process_single_document(
+                        client, target_server, doc, semaphore, 
+                        write_lock, llm_result_filepath, failed_filepath
+                    )
+                )
+            for future in tqdm(
+                asyncio.as_completed(tasks), 
+                total=len(tasks), 
+                unit="doc", 
+                desc="Summarizing Documents"
+            ):
+                await future
+        
+        return True
+
+class DocumentEmbedder:
+    def __init__(self, embedding_server_url: str) -> None:
+        self.embedding_server_url = embedding_server_url
+
+    def run_embedding(self, json_filepath: str, embedding_result_filepath: str, failed_filepath: str) -> bool:
+        with shelve.open(embedding_result_filepath, flag='c') as embedding_result_db, \
+             open(failed_filepath, "a", encoding="utf-8") as failed_file, \
+             open(json_filepath, "r", encoding="utf-8") as json_file:
+            
+            total_lines = sum(1 for _ in open(json_filepath, "r", encoding="utf-8"))
+            json_file.seek(0)
+
+            for json_line in tqdm(json_file, total=total_lines, desc="Embedding Document Summary"):
+                data = json.loads(json_line)
+                doc_title = data["doc_title"]
+                
+                if doc_title in embedding_result_db: continue
+                
+                try:
+                    embedding = self._request_embedding(data["summary"])
+                    embedding_result_db[doc_title] = embedding
+                except Exception as e:
+                    failed_file.write(f"{doc_title}\t{e}\n")
+                    failed_file.flush()
+        
+        return True
+
+    def _request_embedding(self, text: str) -> NDArray[np.floating[tp.Any]]:
+        payload: JSONDict = {"text": text, "img_path": "", "bounding_box": None}
+        res = requests.post(f"{self.embedding_server_url}/embed", json=payload, timeout=120)
+        res.raise_for_status()
+        return np.array(res.json()["embedding"], dtype=np.float32)

@@ -1,26 +1,36 @@
 import asyncio
 
-from download import FIFDatasetLoader
-from graph import FIFGraph
+from download import FiFDatasetLoader
+from graph import FiFGraph
+from lilac import LILaCTraversalContext, LILaCTraverser
 from preprocessor import (
-    LLMQuerySerializer, DocumentSummarizer, BatchImageDescriptor, BatchObjectDetector, EmbeddingSerializer, DocumentEmbedder
+    LLMQuerySerializer,
+    DocumentSummarizer,
+    BatchImageDescriptor,
+    BatchObjectDetector,
+    EmbeddingSerializer,
+    DocumentEmbedder
 )
+from sanity import verify_embedding
+from evaluation import embedding_evaluation, lilac_retrieval_evaluation
 from config import (
-    MMCOQA_RESTORE_FOLDERPATH, MMCOQA_RESTORE_IMAGE_FOLDERPATH,
+    MMCOQA_RESTORE_FOLDERPATH, MMCOQA_RESTORE_DEV_FILEPATH, MMCOQA_RESTORE_IMAGE_FOLDERPATH,
     MMCOQA_DOCUMENT_SUMMARIZATION_FILEPATH, MMCOQA_DOCUMENT_SUMMARIZATION_FAILED_FILEPATH,
     MMCOQA_IMAGE_DESCRIPTION_FILEPATH, MMCOQA_IMAGE_DESCRIPTION_FAILED_FILEPATH,
     MMCOQA_OBJECT_DETECTION_FILEPATH, MMCOQA_OBJECT_DETECTION_FAILED_FILEPATH,
     MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH, MMCOQA_DOCUMENT_EMBEDDING_FAILED_FILEPATH,
     QWEN_SERVER_URL_LIST, MMEMBED_SERVER_URL_LIST,
+    TOP_K, BEAM_SIZE, MAX_HOP
 )
 
 def preprocess_main():
     '''Dataset Download + Load (From Huggingface)'''
-    # mmcoqa_doc_dataset_loader = FIFDatasetLoader(
+    # mmcoqa_doc_dataset_loader = FiFDatasetLoader(
     #     dataset_name="JoohyungYun/mmcoqa_doc",
     #     save_path=MMCOQA_RESTORE_FOLDERPATH
     # )
     # mmcoqa_doc_dataset_loader.restore(overwrite=True)
+    # mmcoqa_doc_dataset_loader.restore_dev_jsonl(MMCOQA_RESTORE_DEV_FILEPATH)
 
     '''Document Summarization'''
     # llm_query_serializer = LLMQuerySerializer(MMCOQA_RESTORE_IMAGE_FOLDERPATH)
@@ -49,32 +59,57 @@ def preprocess_main():
     #     MMCOQA_OBJECT_DETECTION_FAILED_FILEPATH
     # )
     
-    '''Document Full Embedding''' # TODO
-    embedding_serializer = EmbeddingSerializer(MMCOQA_RESTORE_IMAGE_FOLDERPATH)
-    document_embedder: DocumentEmbedder = DocumentEmbedder(embedding_serializer)
-    document_embedder.load_files(
-        MMCOQA_RESTORE_FOLDERPATH,
-        MMCOQA_DOCUMENT_SUMMARIZATION_FILEPATH,
-        MMCOQA_OBJECT_DETECTION_FILEPATH,
-        MMCOQA_IMAGE_DESCRIPTION_FILEPATH
-    )
-    document_embedder.run_embedding(
-        MMEMBED_SERVER_URL_LIST,
-        MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
-        MMCOQA_DOCUMENT_EMBEDDING_FAILED_FILEPATH
-    )
+    '''Document Full Embedding'''
+    # embedding_serializer = EmbeddingSerializer(MMCOQA_RESTORE_IMAGE_FOLDERPATH)
+    # document_embedder: DocumentEmbedder = DocumentEmbedder(embedding_serializer)
+    # document_embedder.load_files(
+    #     MMCOQA_RESTORE_FOLDERPATH,
+    #     MMCOQA_DOCUMENT_SUMMARIZATION_FILEPATH,
+    #     MMCOQA_OBJECT_DETECTION_FILEPATH,
+    #     MMCOQA_IMAGE_DESCRIPTION_FILEPATH
+    # )
+    # asyncio.run(document_embedder.run_embedding(
+    #     MMEMBED_SERVER_URL_LIST,
+    #     MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
+    #     MMCOQA_DOCUMENT_EMBEDDING_FAILED_FILEPATH
+    # ))
     
     '''MM-Embed Evaluation'''
+    # verify_embedding(MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH)
+    # embedding_evaluation(
+    #     MMEMBED_SERVER_URL_LIST[0],
+    #     MMCOQA_RESTORE_DEV_FILEPATH,
+    #     MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
+    #     TOP_K
+    # )
     
-    '''FIF Graph Construction''' # TODO
-    # FIFGraph.construct_graph()
-
+    '''FiF Graph Construction'''
+    fif_graph: FiFGraph = FiFGraph.construct_graph(
+        MMCOQA_RESTORE_FOLDERPATH,
+        MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
+        MMCOQA_DOCUMENT_SUMMARIZATION_FILEPATH
+    )
+    
+    FiFGraph.save(fif_graph, "mmcoqa")
 
 def process_main():
-    pass
-    '''Orchestrator''' # TODO
-    '''LLM Answer Generation''' # TODO
-    '''Evaluation''' # TODO
+    fif_graph: FiFGraph = FiFGraph.load("mmcoqa")
+    
+    '''LILaC Graph Traverser''' # TODO
+    '''LILaC Graph Traverse Evaluation''' # TODO
+    lilac_retrieval_evaluation(
+        fif_graph,
+        QWEN_SERVER_URL_LIST[0],
+        MMEMBED_SERVER_URL_LIST[0],
+        MMCOQA_RESTORE_DEV_FILEPATH,
+        BEAM_SIZE, TOP_K, MAX_HOP
+    )
+    
+    '''FiF Graph Orchestrator''' # TODO
+    
+    '''FiF LLM Answer Generation''' # TODO
+    
+    '''FiF Evaluation''' # TODO
 
 if __name__ == "__main__":
     preprocess_main()

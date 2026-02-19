@@ -1,9 +1,16 @@
 import os
+import re
 import json
 import urllib.parse
 import typing as tp
 
 from type import JSONDict
+
+def safe_doc_id(name: str, max_len: int = 50) -> str:
+    if not name: return "unknown"
+    name = re.sub(r'[\/\\\:\*\?\"\<\>\|]', '_', name)
+    name = name.strip()
+    return name[:max_len]
 
 def get_clean_savepath_from_url_with_custom_extension(image_save_folder_path: str, original_url: str, extension: str) -> str:
     name_without_ext, _ = get_clean_filename_and_extension_from_url(original_url)

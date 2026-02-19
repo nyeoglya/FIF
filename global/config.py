@@ -2,6 +2,7 @@ import typing as tp
 
 MMCOQA_RESTORE_FOLDERPATH: str       = "/dataset/original/mmcoqa_doc/"
 MMCOQA_RESTORE_IMAGE_FOLDERPATH: str = "/dataset/original/mmcoqa_doc/images"
+MMCOQA_RESTORE_DEV_FILEPATH: str     = "/dataset/original/mmcoqa_doc_dev.jsonl"
 
 MMCOQA_DOCUMENT_SUMMARIZATION_FILEPATH: str        = "/dataset/artifact/mmcoqa_doc_summarization.jsonl"
 MMCOQA_DOCUMENT_SUMMARIZATION_FAILED_FILEPATH: str = "/dataset/artifact/mmcoqa_doc_summarization_failed.txt"
@@ -21,5 +22,10 @@ QWEN_SERVER_URL_LIST: tp.List[str] = [
     "http://fif-qwen-worker-2:8000/v1/chat/completions"
 ]
 MMEMBED_SERVER_URL_LIST: tp.List[str] = [
-    "http://fif-mmembed:8000"
+    "http://fif-mmembed:8000",
+    "http://fif-mmembed:8001"
 ]
+
+TOP_K: int = 9
+BEAM_SIZE: int = 30
+MAX_HOP: int = 100

@@ -69,7 +69,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              device_ids: [ '1' ]
+              device_ids: [ '0' ]
               capabilities: [ gpu ]
 
   qwen-worker-1:
@@ -128,7 +128,7 @@ services:
             - driver: nvidia
               count: all
               capabilities: [ gpu ]
-    command: python -u server.py --gpus 2,3 --port 8000
+    command: python -u server.py --gpus 1 --port 8000
     tty: true
     stdin_open: true
 

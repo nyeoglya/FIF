@@ -7,10 +7,11 @@ from collections import defaultdict
 from tqdm import tqdm
 from datasets import load_dataset, Dataset # type: ignore
 from type import JSONDict
+from common import safe_doc_id
 
 MergedDocType = tp.Dict[str, tp.Dict[str, tp.Dict[str, tp.Any]]]
 
-class FIFDatasetLoader:
+class FiFDatasetLoader:
     DEFAULT_CONFIGS = ['text_component', 'table_component', 'image_component', 'image_dump']
     
     def __init__(self, dataset_name: str, save_path: str):
@@ -25,6 +26,7 @@ class FIFDatasetLoader:
         self.data['table'] = load_dataset(self.dataset_name, 'table_component', split='table')
         self.data['image_meta'] = load_dataset(self.dataset_name, 'image_component', split='image_meta')
         self.data['image_dump'] = load_dataset(self.dataset_name, 'image_dump', split='dump')
+        self.data['dev'] = load_dataset(self.dataset_name, 'dev', split='test')
 
         print("Mapping image bytes...")
         self.image_bytes_dict = {
@@ -78,7 +80,7 @@ class FIFDatasetLoader:
         self.image_out.mkdir(parents=True, exist_ok=True)
 
         for doc_title, content in tqdm(self.merged_doc_dict.items(), desc="Restoring Documents"):
-            safe_doc_title = self._safe_filename(doc_title)
+            safe_doc_title = safe_doc_id(doc_title)
             
             for _, img_info in content["image"].items():
                 image_name = img_info["image_name"]
@@ -93,8 +95,13 @@ class FIFDatasetLoader:
                 else:
                     img_info["image_name"] = None
 
+            for section in ("text", "table", "image"):
+                for comp_data in content[section].values():
+                    if "hyperlinks" in comp_data:
+                        comp_data["hyperlinks"] = [safe_doc_id(h) for h in comp_data["hyperlinks"]]
+
             doc_json: JSONDict = {
-                "title": doc_title,
+                "title": safe_doc_title,
                 "text": content["text"],
                 "table": content["table"],
                 "image": content["image"]
@@ -103,4 +110,27 @@ class FIFDatasetLoader:
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(doc_json, f, ensure_ascii=False, indent=2)
 
-        print(f"\nSuccessfully restored to: {self.base_out.resolve()}")
+        print(f"Successfully restored to: {self.base_out.resolve()}")
+    
+    def restore_dev_jsonl(self, filename: str):
+        dev_path = self.base_out / filename
+        print(f"Restoring dev queries to {dev_path}...")
+
+        with open(dev_path, "w", encoding="utf-8") as f:
+            for row_data in tqdm(self.data['dev'], desc="Processing Dev Queries"):
+                qid = row_data.get("qid")
+                question = row_data.get("question")
+                primary_answer = row_data.get("answer", "")
+                evidences_field = row_data.get("evidence", [])
+                safe_evidences = [
+                    [safe_doc_id(evi[0])] + evi[1:] for evi in evidences_field
+                ]
+                record = {
+                    "qid": qid,
+                    "question": question,
+                    "answer": str(primary_answer),
+                    "evidence": safe_evidences
+                }
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+        print(f"Successfully saved {len(self.data['dev'])} queries to {dev_path}")

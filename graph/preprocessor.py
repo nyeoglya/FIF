@@ -4,9 +4,7 @@ import os
 import re
 import json
 import base64
-import pickle
 import asyncio
-import requests
 import typing as tp
 from pathlib import Path
 import itertools
@@ -17,75 +15,13 @@ import pysbd # type: ignore
 import httpx
 import numpy as np
 from tqdm.asyncio import tqdm
+from tqdm.asyncio import tqdm as atqdm
 from numpy.typing import NDArray
 from ultralytics import YOLO # type: ignore
 
 from common import get_clean_savepath_from_url_with_custom_extension
-from type import JSONDict
+from type import JSONDict, SerializedDataForEmbeding
 from query import DOCUMENT_SUMMARIZATION_QUERY, IMAGE_OCR_QUERY, IMAGE_EXPLANATION_QUERY
-import compatibility # type: ignore
-
-
-class LightweightComponent:
-    def __init__(self) -> None:
-        self.groundtruth_component_label_list: tp.List[str] = []
-        self.original_json_data: JSONDict = dict()
-        self.component_embedding: NDArray[np.floating[tp.Any]] = np.array([])
-        self.subcomponent_embeddings: tp.List[NDArray[np.floating[tp.Any]]] = []
-        self.linked_document_title_list: tp.List[str] = []
-
-class FIFDocument:
-    def __init__(self) -> None:
-        self.document_title: str = ""
-        self.document_summary: str = ""
-        self.document_embedding: NDArray[np.floating[tp.Any]] = np.array([])
-        self.original_json_data: JSONDict = dict()
-        self.processed_component_list: tp.List[LightweightComponent] = []
-    
-    def save_to_filepath(self, save_filepath: str) -> bool:
-        with open(save_filepath, 'wb') as f:
-            pickle.dump(self, f)
-        tqdm.write(f"Successfully saved to {save_filepath}")
-        return True
-
-    @staticmethod
-    def load_from_ldoc_filepath(ldoc_filepath: str) -> tp.Optional[FIFDocument]:
-        try:
-            if not os.path.exists(ldoc_filepath):
-                tqdm.write("File not found.")
-                return None
-            
-            with open(ldoc_filepath, 'rb') as f:
-                obj = pickle.load(f)
-                new_fif_document: FIFDocument = FIFDocument()
-                new_fif_document.document_title = obj.doc_title
-                new_fif_document.original_json_data = obj.original_json_data
-                for processed_component in obj.processed_components:
-                    new_processed_component = LightweightComponent()
-                    new_processed_component.groundtruth_component_label_list = processed_component.component_uuid
-                    new_processed_component.component_embedding = processed_component.component_embedding
-                    new_processed_component.linked_document_title_list = processed_component.neighbor_components
-                    new_processed_component.original_json_data = processed_component.original_component
-                    new_processed_component.subcomponent_embeddings = processed_component.subcomponent_embeddings
-                    new_fif_document.processed_component_list.append(new_processed_component)
-            return new_fif_document
-        except Exception as e:
-            tqdm.write(f"Load failed: {e}")
-            return None
-
-    @staticmethod
-    def load_from_filepath(fif_filepath: str) -> tp.Optional[FIFDocument]:
-        try:
-            if not os.path.exists(fif_filepath):
-                tqdm.write("File not found.")
-                return None
-            
-            with open(fif_filepath, 'rb') as f:
-                obj = pickle.load(f)
-            return obj
-        except Exception as e:
-            tqdm.write(f"Load failed: {e}")
-            return None
 
 class LLMQuerySerializer:
     def __init__(self, image_folderpath: str) -> None:
@@ -109,20 +45,20 @@ class LLMQuerySerializer:
                 continue                
         return encoded_data_list
     
-    def serialize_document(self, document_title: str, json_component_list: tp.List[JSONDict]) -> tp.Tuple[str, tp.List[str]]:
+    def serialize_document_for_prompt(self, document_title: str, json_component_list: tp.List[JSONDict]) -> tp.Tuple[str, tp.List[str]]:
         self.image_counter = 0
         serialized_component_list: tp.List[str] = []
         image_filepath_list: tp.List[str] = []
         for json_component_data in json_component_list[:10]: # TODO: VRAM Limitation
             if json_component_data["type"] == "paragraph":
-                serialized_component_list.append(self._serialize_text_component_for_prompt(document_title, json_component_data))
+                serialized_component_list.append(self.serialize_text_component_for_prompt(document_title, json_component_data))
             elif json_component_data["type"] == "table":
-                serialized_text, first_image_path = self._serialize_table_component_for_prompt(document_title, json_component_data)
+                serialized_text, first_image_path = self.serialize_table_component_for_prompt(document_title, json_component_data)
                 serialized_component_list.append(serialized_text)
                 if first_image_path:
                     image_filepath_list.append(get_clean_savepath_from_url_with_custom_extension(self.image_folderpath, first_image_path, "png"))
             elif json_component_data["type"] == "image":
-                serialized_text, image_path = self._serialize_image_component_for_prompt(document_title, json_component_data)
+                serialized_text, image_path = self.serialize_image_component_for_prompt(document_title, json_component_data)
                 serialized_component_list.append(serialized_text)
                 if image_path:
                     image_filepath_list.append(get_clean_savepath_from_url_with_custom_extension(self.image_folderpath, image_path, "png"))
@@ -134,28 +70,10 @@ class LLMQuerySerializer:
         )
         return final_text_prompt, image_filepath_list
 
-    def _serialize_text_component_for_prompt(self, document_title: str, text_component_data: JSONDict) -> str:
+    def serialize_text_component_for_prompt(self, document_title: str, text_component_data: JSONDict) -> str:
         return f"/*\n[Passage]\nTitle: {document_title}\nSection: {', '.join(text_component_data['heading_path'])}\n\n{text_component_data['text']}\n*/\n\n"
 
-    def _serialize_table_cell_for_prompt(self, cell_data: JSONDict, first_image_taken: bool) -> tp.Tuple[str, str]:
-        serialized_text: str = ""
-        image_name: str = cell_data.get("image_name", "")
-        image_path: str = image_name[0] if (
-            image_name
-            and not first_image_taken
-            and os.path.exists(os.path.join(self.image_folderpath, image_name + ".png"))
-        ) else ""
-        if image_path:
-            serialized_text += f"<Image {self.image_counter}>"
-            self.image_counter += 1
-        if serialized_text:
-            serialized_text += ", "
-        serialized_text += cell_data["text"].strip()
-        
-        normalized_serialized_text: str = re.sub(r'\s*,\s*', ' , ', serialized_text)
-        return normalized_serialized_text, image_path
-
-    def _serialize_table_component_for_prompt(self, document_title: str, table_component_data: JSONDict) -> tp.Tuple[str, str]:
+    def serialize_table_component_for_prompt(self, document_title: str, table_component_data: JSONDict) -> tp.Tuple[str, str]:
         serialized_text: str = f"/*\n[Table]\nTitle: {document_title}\nSection: {', '.join(table_component_data['heading_path'])}\n\n"
         first_img_taken: bool = False
         first_image_path: str = ""
@@ -175,7 +93,7 @@ class LLMQuerySerializer:
         serialized_text += '\n'.join(serialized_table) + "\n"
         return serialized_text, first_image_path
 
-    def _serialize_image_component_for_prompt(self, document_title: str, image_component_data: JSONDict) -> tp.Tuple[str, str]:
+    def serialize_image_component_for_prompt(self, document_title: str, image_component_data: JSONDict) -> tp.Tuple[str, str]:
         serialized_text: str = f"/*\n[Image]\nTitle: {document_title}\nSection: {', '.join(image_component_data['heading_path'])}\n\n"
 
         image_name = image_component_data.get("image_name")
@@ -190,6 +108,24 @@ class LLMQuerySerializer:
         
         serialized_text += "*/\n\n"
         return serialized_text, image_path
+
+    def _serialize_table_cell_for_prompt(self, cell_data: JSONDict, first_image_taken: bool) -> tp.Tuple[str, str]:
+        serialized_text: str = ""
+        image_name: str = cell_data.get("image_name", "")
+        image_path: str = image_name[0] if (
+            image_name
+            and not first_image_taken
+            and os.path.exists(os.path.join(self.image_folderpath, image_name + ".png"))
+        ) else ""
+        if image_path:
+            serialized_text += f"<Image {self.image_counter}>"
+            self.image_counter += 1
+        if serialized_text:
+            serialized_text += ", "
+        serialized_text += cell_data["text"].strip()
+        
+        normalized_serialized_text: str = re.sub(r'\s*,\s*', ' , ', serialized_text)
+        return normalized_serialized_text, image_path
 
 class DocumentSummarizer:
     def __init__(self, document_serializer: LLMQuerySerializer) -> None:
@@ -240,7 +176,7 @@ class DocumentSummarizer:
         json_component_list = json_text_list + json_table_list + json_image_list
         json_component_list = [json_component for json_component in json_component_list if not json_component["heading_path"]]
         
-        final_text_prompt, image_filepath_list = self.document_serializer.serialize_document(json_doc["title"], json_component_list)
+        final_text_prompt, image_filepath_list = self.document_serializer.serialize_document_for_prompt(json_doc["title"], json_component_list)
         encoded_images = self.document_serializer.serialize_images_to_base64(image_filepath_list[:5]) # TODO: VRAM Limitation
         
         image_content_list: tp.List[JSONDict] = [
@@ -310,9 +246,9 @@ class DocumentSummarizer:
                                 processed_titles.add(llm_result_data["doc_title"])
                         except json.JSONDecodeError:
                             continue
-                tqdm.write(f"Skipping {len(processed_titles)} already processed documents.")
+                atqdm.write(f"Skipping {len(processed_titles)} already processed documents.")
             except Exception as e:
-                tqdm.write(f"Error reading existing result file: {e}")
+                atqdm.write(f"Error reading existing result file: {e}")
 
         target_docs = [
             doc for doc in self.fif_json_list 
@@ -320,7 +256,7 @@ class DocumentSummarizer:
         ]
 
         if not target_docs:
-            tqdm.write("All documents are already processed.")
+            atqdm.write("All documents are already processed.")
             return True
 
         write_lock = asyncio.Lock()
@@ -337,7 +273,7 @@ class DocumentSummarizer:
                     )
                 )
 
-            for future in tqdm.as_completed(tasks, total=len(tasks), unit="doc", desc="Summarizing Documents"): # type: ignore
+            for future in atqdm.as_completed(tasks, total=len(tasks), unit="doc", desc="Summarizing Documents"): # type: ignore
                 await future
         
         return True
@@ -452,7 +388,7 @@ class BatchImageDescriptor:
         ]
 
         if not target_list:
-            tqdm.write("No images to process.")
+            atqdm.write("No images to process.")
             return True
 
         write_lock = asyncio.Lock()
@@ -469,7 +405,7 @@ class BatchImageDescriptor:
                     )
                 )
 
-            for future in tqdm.as_completed(tasks, total=len(tasks), desc="Processing Images"): # type: ignore
+            for future in atqdm.as_completed(tasks, total=len(tasks), desc="Processing Images"): # type: ignore
                 await future
 
         return True
@@ -568,8 +504,6 @@ class BatchObjectDetector:
 
         return outputs
 
-SerializedDataForEmbeding = tp.Tuple[str, str, tp.Optional[tp.Tuple[int, int, int, int]]]
-
 class EmbeddingSerializer:
     def __init__(
             self,
@@ -579,15 +513,21 @@ class EmbeddingSerializer:
         self.text_segmenter = pysbd.Segmenter(language="en", clean=False)
         
         self.doc_title: str = ""
-        self.image_description_dict: tp.Dict[str, JSONDict] = dict()
+        self.image_description_dict: tp.Dict[str, str] = dict()
+        self.image_ocr_dict: tp.Dict[str, str] = dict()
+        self.object_detection_dict: tp.Dict[str, tp.List[tp.Tuple[int, int, int, int]]] = dict()
     
     def run(
         self,
         json_data: JSONDict,
-        image_description_dict: tp.Dict[str, JSONDict],
+        image_description_dict: tp.Dict[str, str],
+        image_ocr_dict: tp.Dict[str, str],
+        object_detection_dict: tp.Dict[str, tp.List[tp.Tuple[int, int, int, int]]],
     ) -> tp.Tuple[tp.Dict[str, SerializedDataForEmbeding], tp.List[SerializedDataForEmbeding], tp.Dict[str, tp.Tuple[int, int]]]:
         self.doc_title: str = json_data["title"]
         self.image_description_dict = image_description_dict
+        self.image_ocr_dict = image_ocr_dict
+        self.object_detection_dict = object_detection_dict
         
         result_serialized_component_dict: tp.Dict[str, SerializedDataForEmbeding] = dict()
         component_metadata_dict: tp.Dict[str, tp.Tuple[int, int]] = dict()
@@ -669,15 +609,18 @@ class EmbeddingSerializer:
         assert os.path.exists(image_filepath)
         assert image_filename in self.image_description_dict
         
-        image_metadata = self.image_description_dict[image_filename]
         serialized_text = f"{self.doc_title} [SEP] {' , '.join(component['heading_path'])} [SEP] {component['caption']}"
-        serialized_text += f" [SEP] {image_metadata['explanation']}" if image_metadata["explanation"] else ""
-        serialized_text += f" [SEP] {image_metadata['ocr']}" if image_metadata["ocr"] else ""
+        serialized_text += f" [SEP] {self.image_description_dict[image_filename]}" if image_filename in self.image_description_dict else ""
+        serialized_text += f" [SEP] {self.image_ocr_dict[image_filename]}" if image_filename in self.image_ocr_dict else ""
 
         component_serialized_data = (serialized_text, image_filepath, None)
-        if not image_metadata["bounding_box"]: subcomponent_serialized_data_list = [component_serialized_data]
+        if (
+            image_filename not in self.object_detection_dict
+            or not self.object_detection_dict[image_filename]
+        ):
+            subcomponent_serialized_data_list = [component_serialized_data]
         else:
-            for bounding_box in image_metadata["bounding_box"]:
+            for bounding_box in self.object_detection_dict[image_filename]:
                 subcomponent_serialized_data_list.append((serialized_text, image_filepath, bounding_box))
         
         return component_serialized_data, subcomponent_serialized_data_list
@@ -703,7 +646,7 @@ class EmbeddingSerializer:
             image_full_filepath: str = os.path.join(self.image_data_folderpath, image_name_with_ext)
             if os.path.exists(image_full_filepath) and image_name_with_ext in self.image_description_dict:
                 result_image_path_list.append(image_full_filepath)
-                result_text += f" [SEP] <Image {image_index}> {image_full_filepath} {self.image_description_dict[image_name_with_ext]['explanation']}"
+                result_text += f" [SEP] <Image {image_index}> {image_full_filepath} {self.image_description_dict[image_name_with_ext]}"
                 image_index += 1
         return result_text, result_image_path_list
 
@@ -712,8 +655,9 @@ class DocumentEmbedder:
         self.embedding_serializer: EmbeddingSerializer = embedding_serializer
         self.json_filepath_list: tp.List[str] = []
         self.document_summarization_dict: tp.Dict[str, str] = {}
-        self.image_description_dict: tp.Dict[str, JSONDict] = {}
-        self.object_detection_dict: tp.Dict[str, JSONDict] = {}
+        self.image_description_dict: tp.Dict[str, str] = {}
+        self.image_ocr_dict: tp.Dict[str, str] = {}
+        self.object_detection_dict: tp.Dict[str, tp.List[tp.Tuple[int, int, int, int]]] = {}
     
     def load_files(
         self,
@@ -726,6 +670,7 @@ class DocumentEmbedder:
         self.json_filepath_list = [os.path.join(json_folderpath, filename) for filename in os.listdir(json_folderpath) if filename.endswith(".json")]
         self.document_summarization_dict = self._load_jsonl_to_dict(document_summarization_filepath, "doc_title", "summary")
         self.image_description_dict = self._load_jsonl_to_dict(image_description_filepath, "image", "explanation")
+        self.image_ocr_dict = self._load_jsonl_to_dict(image_description_filepath, "image", "ocr")
         self.object_detection_dict = self._load_jsonl_to_dict(object_detection_filepath, "image", "bounding_box")
     
     def _load_jsonl_to_dict(self, file_path: str, title_key: str, data_key: str) -> tp.Dict[str, tp.Any]:
@@ -740,58 +685,122 @@ class DocumentEmbedder:
                 result_dict[item[title_key]] = item[data_key]
         return result_dict
     
-    def run_embedding(
+    async def _request_embedding(
+        self, 
+        client: httpx.AsyncClient, 
+        server_url: str, 
+        serialized_data: tp.Tuple[str, str, tp.Any]
+    ) -> NDArray[np.float32]:
+        payload: JSONDict = {
+            "text": serialized_data[0],
+            "img_path": serialized_data[1],
+            "bounding_box": serialized_data[2]
+        }
+        res = await client.post(f"{server_url}/embed", json=payload, timeout=120)
+        res.raise_for_status()
+        return np.array(res.json()["embedding"], dtype=np.float32)
+
+    async def _process_single_document(
+        self,
+        client: httpx.AsyncClient,
+        server_url: str,
+        json_filepath: str,
+        embedding_result_folderpath: str,
+        failed_filepath: str,
+        semaphore: asyncio.Semaphore,
+        write_lock: asyncio.Lock
+    ):
+        async with semaphore:
+            try:
+                with open(json_filepath, "r", encoding="utf-8") as json_file:
+                    json_file_data = json.load(json_file)
+                
+                doc_title = json_file_data["title"]
+                result_filename = os.path.join(
+                    embedding_result_folderpath, 
+                    Path(json_filepath).stem + ".npz"
+                )
+
+                if os.path.exists(result_filename): return
+
+                document_summary = self.document_summarization_dict[doc_title]
+                (
+                    result_serialized_component_dict, 
+                    result_serialized_subcomponent_list, 
+                    component_metadata_dict
+                ) = self.embedding_serializer.run(
+                    json_file_data,
+                    self.image_description_dict,
+                    self.image_ocr_dict,
+                    self.object_detection_dict
+                )
+
+                result_embedding_dict: tp.Dict[str, tp.Any] = {}
+
+                result_embedding_dict["doc_emb"] = await self._request_embedding(
+                    client, server_url, (document_summary, "", None)
+                )
+
+                for component_key, serialized_data in result_serialized_component_dict.items():
+                    result_embedding_dict[component_key] = await self._request_embedding(
+                        client, server_url, serialized_data
+                    )
+
+                temp_subcomponents: tp.List[NDArray[np.float32]] = []
+                for sub_data in result_serialized_subcomponent_list:
+                    emb = await self._request_embedding(client, server_url, sub_data)
+                    temp_subcomponents.append(emb)
+
+                result_embedding_dict["subembs"] = np.array(temp_subcomponents)
+                result_embedding_dict["metadata"] = np.array(component_metadata_dict, dtype=object)
+
+                assert "doc_emb" in result_embedding_dict, "Critical: doc_emb not in dict!"
+                assert "subembs" in result_embedding_dict, "Critical: subembs not in dict!"
+                assert "metadata" in result_embedding_dict, "Critical: metadata not in dict!"
+
+                np.savez(result_filename, **result_embedding_dict)
+            except Exception as e:
+                async with write_lock:
+                    with open(failed_filepath, "a", encoding="utf-8") as failed_file:
+                        failed_file.write(f"{json_filepath}\t{str(e)}\n")
+
+    async def run_embedding(
         self,
         embedding_server_list: tp.List[str],
         embedding_result_folderpath: str,
         failed_filepath: str
     ) -> bool:
-        with open(failed_filepath, "a", encoding="utf-8") as failed_file:
-            for json_filepath in tqdm(self.json_filepath_list, desc="Embedding Document Summary"): # TODO
-                with open(json_filepath, "r", encoding="utf-8") as json_file:
-                    json_file_data: JSONDict = json.load(json_file)
-                doc_title = json_file_data["title"]
-                result_filename = os.path.join(embedding_result_folderpath, os.path.basename(json_filepath) + ".npz")
-                
-                if os.path.exists(result_filename): continue
-                
-                # TODO: serialize
-                document_summary = self.document_summarization_dict[doc_title]
-                result_serialized_component_dict, result_serialized_subcomponent_list, component_metadata_dict = self.embedding_serializer.run(
-                    json_file_data,
-                    self.image_description_dict
-                )
-                
-                # TODO: request
-                result_embedding_dict: tp.Dict[str, NDArray[np.floating[tp.Any]]] = dict()
-                result_embedding_dict["doc_emb"] = self._request_embedding(embedding_server_list[0], (document_summary, "", None))
-                
-                result_embedding_dict: tp.Dict[str, NDArray[np.floating[tp.Any]]] = {}
-                for component_key in result_serialized_component_dict:
-                    result_serialized_data: SerializedDataForEmbeding = result_serialized_component_dict[component_key]
-                    try:
-                        result_embedding_dict[component_key] = self._request_embedding(embedding_server_list[0], result_serialized_data)
-                    except Exception as e:
-                        failed_file.write(f"{doc_title}\t{e}\n")
-                
-                temp_subcomponents: tp.List[NDArray[np.floating[tp.Any]]] = []
-                for subcomponent_data in result_serialized_subcomponent_list:
-                    try:
-                        temp_subcomponents.append(self._request_embedding(embedding_server_list[0], subcomponent_data))
-                    except Exception as e:
-                        failed_file.write(f"{doc_title}\t{e}\n")
-                
-                result_embedding_dict["subembs"] = np.array(temp_subcomponents)
-                result_embedding_dict["metadata"] = np.array(component_metadata_dict, dtype=object)
-                
-                # TODO: save
-                np.savez(result_filename, **result_embedding_dict)
-                failed_file.flush()
-        
-        return True
+        target_list: tp.List[str] = []
+        for json_filepath in self.json_filepath_list:
+            result_filename = os.path.join(
+                embedding_result_folderpath, 
+                os.path.basename(json_filepath) + ".npz" 
+            )
+            if not os.path.exists(result_filename):
+                target_list.append(json_filepath)
 
-    def _request_embedding(self, embedding_server_url: str, serialized_data: SerializedDataForEmbeding) -> NDArray[np.floating[tp.Any]]:
-        payload: JSONDict = {"text": serialized_data[0], "img_path": serialized_data[1], "bounding_box": serialized_data[2]}
-        res = requests.post(f"{embedding_server_url}/embed", json=payload, timeout=120)
-        res.raise_for_status()
-        return np.array(res.json()["embedding"], dtype=np.float32)
+        if not target_list: return True
+
+        semaphore = asyncio.Semaphore(len(embedding_server_list))
+        write_lock = asyncio.Lock()
+        server_cycle = itertools.cycle(embedding_server_list)
+
+        async with httpx.AsyncClient(limits=httpx.Limits(max_connections=100)) as client:
+            tasks: tp.List[tp.Coroutine[tp.Any, tp.Any, None]] = []
+            for json_filepath in target_list:
+                tasks.append(
+                    self._process_single_document(
+                        client,
+                        next(server_cycle),
+                        json_filepath,
+                        embedding_result_folderpath,
+                        failed_filepath,
+                        semaphore,
+                        write_lock
+                    )
+                )
+
+            for future in atqdm.as_completed(tasks, total=len(tasks), desc="Embedding Documents"): # type: ignore
+                await future
+
+        return True

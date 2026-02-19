@@ -3,13 +3,8 @@
 
 # dataset
 dataset/
-crawler/crawled_*
-crawler/MMQA_dev.jsonl
-*.lgraph
-
-# process file
-lilac_*.json
-lilac_*.jsonl
+graph/*.json
+graph/*.npz
 
 # log files
 *.log
@@ -17,6 +12,7 @@ lilac_*.jsonl
 # model files
 hf_models
 hf_cache
+graph/*.pt
 
 # sensitive info
 **/env.py

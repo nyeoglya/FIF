@@ -25,12 +25,6 @@ class LayeredComponentGraph:
 
         self._docname_to_document: Dict[str, DocumentTree] = {}
         self._docname_to_rootnode: Dict[str, Node] = {}
-        
-        # Edge structures
-        # inter_document_edges: {filename -> {component_id -> [linked_filenames]}}
-        # intra_document_edges: {filename -> {component_id -> [child_components]}}
-        # self._inter_document_edges: Dict[str, Dict[str, List[str]]] = {}
-        # self._intra_document_edges: Dict[str, Dict[str, List[Component]]] = {}
 
     def _resolve_node_by_nid(self, nid: Type_NID) -> Node:
         """Resolve NID -> Node via this graph."""

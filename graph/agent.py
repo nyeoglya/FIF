@@ -1,10 +1,10 @@
 
 
-class Orchestrator:
+class FiFOrchestrator:
     def __init__(self) -> None:
         pass
 
-class MultiStrategyTraverser:
+class FiFMultiStrategyTraverser:
     def __init__(self) -> None:
         pass
     
@@ -17,10 +17,10 @@ class MultiStrategyTraverser:
     def llm_reasoning(self) -> None:
         pass
 
-class SubqueryPlanner:
+class FiFSubqueryPlanner:
     def __init__(self) -> None:
         pass
 
-class Reranker:
+class FiFReranker:
     def __init__(self) -> None:
         pass

@@ -24,7 +24,7 @@ class FiFMemory:
         assert self.history
         return self.history[-1]
     
-    def reset_memory(self, query: str) -> None:
+    def reset_memory(self, query: str = "") -> None:
         self.query = query
         self.history = []
 

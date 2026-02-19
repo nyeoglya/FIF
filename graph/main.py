@@ -22,6 +22,7 @@ from config import (
     QWEN_SERVER_URL_LIST, MMEMBED_SERVER_URL_LIST,
     TOP_K, BEAM_SIZE, MAX_HOP
 )
+from agent import FiFOrchestrator
 
 def preprocess_main():
     '''Dataset Download + Load (From Huggingface)'''
@@ -76,41 +77,48 @@ def preprocess_main():
     
     '''MM-Embed Evaluation'''
     # verify_embedding(MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH)
-    # embedding_evaluation(
-    #     MMEMBED_SERVER_URL_LIST[0],
-    #     MMCOQA_RESTORE_DEV_FILEPATH,
-    #     MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
-    #     TOP_K
+    # asyncio.run(
+    #     embedding_evaluation(
+    #         MMEMBED_SERVER_URL_LIST[0],
+    #         MMCOQA_RESTORE_DEV_FILEPATH,
+    #         MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
+    #         TOP_K
+    #     )
     # )
     
     '''FiF Graph Construction'''
-    fif_graph: FiFGraph = FiFGraph.construct_graph(
-        MMCOQA_RESTORE_FOLDERPATH,
-        MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
-        MMCOQA_DOCUMENT_SUMMARIZATION_FILEPATH
-    )
+    # fif_graph: FiFGraph = FiFGraph.construct_graph(
+    #     MMCOQA_RESTORE_FOLDERPATH,
+    #     MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
+    #     MMCOQA_DOCUMENT_SUMMARIZATION_FILEPATH
+    # )
     
-    FiFGraph.save(fif_graph, "mmcoqa")
+    # FiFGraph.save(fif_graph, "mmcoqa")
 
 def process_main():
     fif_graph: FiFGraph = FiFGraph.load("mmcoqa")
     
-    '''LILaC Graph Traverser''' # TODO
-    '''LILaC Graph Traverse Evaluation''' # TODO
-    lilac_retrieval_evaluation(
-        fif_graph,
-        QWEN_SERVER_URL_LIST[0],
-        MMEMBED_SERVER_URL_LIST[0],
-        MMCOQA_RESTORE_DEV_FILEPATH,
-        BEAM_SIZE, TOP_K, MAX_HOP
+    '''LILaC Graph Traverse Evaluation'''
+    asyncio.run(
+        lilac_retrieval_evaluation(
+            fif_graph,
+            QWEN_SERVER_URL_LIST[0],
+            MMEMBED_SERVER_URL_LIST[0],
+            MMCOQA_RESTORE_DEV_FILEPATH,
+            BEAM_SIZE, TOP_K, MAX_HOP
+        )
     )
     
-    '''FiF Graph Orchestrator''' # TODO
+    '''FiF Graph Traverse Orchestrator''' # TODO
+    fif_orchestrator: FiFOrchestrator = FiFOrchestrator()
     
-    '''FiF LLM Answer Generation''' # TODO
+    '''FiF Graph Traverse Evaluation''' # TODO
     
-    '''FiF Evaluation''' # TODO
+    '''LLM Answer Generation''' # TODO
+    
+    '''LLM Answer Evaluation''' # TODO
+
 
 if __name__ == "__main__":
-    preprocess_main()
+    # preprocess_main()
     process_main()

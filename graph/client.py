@@ -5,7 +5,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from type import JSONDict
-from query import SUBQUERY_DIVIDE_QUERY, SUBQUERY_MODALITY_QUERY
+from query import SUBQUERY_DIVIDE_QUERY, SUBQUERY_MODALITY_QUERY, MODALITY_INSTRUCTION_QUERY, MODALITY_AGNOSTIC_QUERY
 
 async def request_embedding(server_url: str, query: str) -> NDArray[np.float32]:
     payload: JSONDict = {
@@ -55,7 +55,8 @@ async def request_subqueries_embedding(llm_server_url: str, embedding_server_url
     embeddings: list[NDArray[np.float32]] = []
     for subquery in subqueries:
         subquery = subquery.strip()
+        if not subquery: continue
         modality = await get_llm_response(llm_server_url, SUBQUERY_MODALITY_QUERY.format(subquery=subquery))
-        embedding = await request_query_embedding(embedding_server_url, modality.strip(), subquery)
+        embedding = await request_query_embedding(embedding_server_url, MODALITY_INSTRUCTION_QUERY.get(modality.strip(), MODALITY_AGNOSTIC_QUERY), subquery)
         embeddings.append(embedding)
     return np.stack(embeddings)

@@ -13,14 +13,15 @@ async def request_embedding(server_url: str, query: str) -> NDArray[np.float32]:
         "img_path": "",
         "bounding_box": None
     }
+    
     async with httpx.AsyncClient() as client:
         res = await client.post(f"{server_url}/embed", json=payload, timeout=120)
+    
     res.raise_for_status()
     return np.array(res.json()["embedding"], dtype=np.float32)
 
-async def get_llm_response(server_url: str, query: str) -> str:
+async def request_llm_response(server_url: str, query: str) -> str:
     payload: JSONDict = {
-        "model": "Qwen/Qwen3-VL-8B-Instruct",
         "messages": [
             {
                 "role": "user",
@@ -33,8 +34,10 @@ async def get_llm_response(server_url: str, query: str) -> str:
         "max_tokens": 512
     }
     headers = {"Content-Type": "application/json"}
+    
     async with httpx.AsyncClient() as client:
         res = await client.post(server_url, headers=headers, json=payload, timeout=120)
+    
     res.raise_for_status()
     return res.json()["choices"][0]["message"]["content"]
 
@@ -44,19 +47,29 @@ async def request_query_embedding(server_url: str, instruction: str, query_text:
         "text": query_text,
         "img_path": "",
     }
+    
     async with httpx.AsyncClient() as client:
         res = await client.post(f"{server_url}/embed/query", json=payload, timeout=120)
+    
     res.raise_for_status()
     return np.array(res.json()["embedding"], dtype=np.float32)
 
 async def request_subqueries_embedding(llm_server_url: str, embedding_server_url: str, query: str) -> NDArray[np.float32]:
-    llm_response = await get_llm_response(llm_server_url, SUBQUERY_DIVIDE_QUERY.format(query=query))
+    llm_response = await request_llm_response(llm_server_url, SUBQUERY_DIVIDE_QUERY.format(query=query))
     subqueries = llm_response.replace("\n", "").split(";")
     embeddings: list[NDArray[np.float32]] = []
+    
     for subquery in subqueries:
         subquery = subquery.strip()
         if not subquery: continue
-        modality = await get_llm_response(llm_server_url, SUBQUERY_MODALITY_QUERY.format(subquery=subquery))
+        
+        modality = await request_llm_response(llm_server_url, SUBQUERY_MODALITY_QUERY.format(subquery=subquery))
         embedding = await request_query_embedding(embedding_server_url, MODALITY_INSTRUCTION_QUERY.get(modality.strip(), MODALITY_AGNOSTIC_QUERY), subquery)
+        
         embeddings.append(embedding)
+
+    if not embeddings:
+        embedding = await request_query_embedding(embedding_server_url, MODALITY_AGNOSTIC_QUERY, query)
+        embeddings = [embedding]
+
     return np.stack(embeddings)

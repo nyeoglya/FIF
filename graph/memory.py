@@ -1,9 +1,10 @@
 import typing as tp
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from numpy.typing import NDArray
 
+from config import BEAM_SIZE
 from type import Strategy, UniqueID
 
 @dataclass
@@ -30,3 +31,12 @@ class FiFMemory:
 
     def add_new_history(self, memory_unit: FiFMemoryUnit):
         self.history.append(memory_unit)
+
+@dataclass
+class FiFTraversalContext:
+    query_embedding: NDArray[np.float32]
+    subquery_embeddings: NDArray[np.float32]
+    beam_size: int = BEAM_SIZE
+    
+    hop_count: int = field(default=0, init=False)
+    fif_memory: FiFMemory = field(default_factory=FiFMemory, init=False)

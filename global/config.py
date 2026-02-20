@@ -14,6 +14,7 @@ MMCOQA_IMAGE_EMBEDDING_FILEPATH: str               = "/dataset/artifact/mmcoqa_i
 MMCOQA_IMAGE_EMBEDDING_FAILED_FILEPATH: str        = "/dataset/artifact/mmcoqa_image_embedding_failed.txt"
 MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH: str          = "/dataset/artifact/mmcoqa_doc_embedding/"
 MMCOQA_DOCUMENT_EMBEDDING_FAILED_FILEPATH: str     = "/dataset/artifact/mmcoqa_doc_embedding_failed.txt"
+MMCOQA_DEV_EMBEDDING_CACHE_FILEPATH: str           = "/dataset/artifact/mmcoqa_dev_embedding_cache.npz"
 
 
 QWEN_SERVER_URL_LIST: tp.List[str] = [

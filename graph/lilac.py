@@ -3,67 +3,54 @@ import typing as tp
 import numpy as np
 from numpy.typing import NDArray
 
-from dataclasses import dataclass, field
-
-from memory import FiFMemory, FiFMemoryUnit
+from memory import FiFMemoryUnit, FiFTraversalContext
 from graph import FiFGraph, FiFDocument, FiFComponent
 from type import UniqueID
-
-from config import BEAM_SIZE
-
-@dataclass
-class LILaCTraversalContext:
-    query_embedding: NDArray[np.float32]
-    subquery_embeddings: NDArray[np.float32]
-    beam_size: int = BEAM_SIZE
-    
-    hop_count: int = field(default=0, init=False)
-    fif_memory: FiFMemory = field(default_factory=FiFMemory, init=False)
 
 class LILaCTraverser:
     def __init__(self, fif_graph: FiFGraph) -> None:
         self.fif_graph: FiFGraph = fif_graph
 
-    def find_entry(self, ctx: LILaCTraversalContext) -> bool:
+    def find_entry(self, ctx: FiFTraversalContext) -> bool:
         ctx.fif_memory.reset_memory()
 
-        # Low-level k-NN: search subcomponent embeddings, then map to component IDs
-        # This matches gold_retriever.py's approach (no late interaction at this stage)
-        subcomp_scores: NDArray[np.float32] = self.fif_graph.subcomponent_embeddings @ ctx.query_embedding.T
-        top_k_low: int = min(2048, len(subcomp_scores))
-        top_indices = np.argsort(-subcomp_scores, axis=0)[:top_k_low]
+        component_scores: NDArray[np.float32] = self.fif_graph.component_embeddings @ ctx.query_embedding.T
+        top_2048_indices = np.argsort(-component_scores, axis=0)[:2048]
 
-        # Map low-level results to component UniqueIDs, keeping first beam_size distinct
-        seen: tp.Set[UniqueID] = set()
-        distinct_component_ids: tp.List[UniqueID] = []
-        for idx in top_indices:
-            component_uid: UniqueID = self.fif_graph.subcomponent_to_component_map[int(idx)]
-            if component_uid not in seen:
-                seen.add(component_uid)
-                distinct_component_ids.append(component_uid)
-                if len(distinct_component_ids) >= ctx.beam_size:
-                    break
+        component_candidate_list: tp.List[tp.Tuple[float, int]] = []
+        for component_loc in top_2048_indices:
+            component_uid: UniqueID = self.fif_graph.component_loc_to_id_map[int(component_loc)]
+            component: FiFComponent = self.fif_graph.get_component_from_unique_id(component_uid)
+            subcomponent_embeddings: NDArray[np.float32] = component.get_subcomponent_embeddings()
+            if subcomponent_embeddings.size == 0: continue
+            subcomponent_scores = subcomponent_embeddings @ ctx.subquery_embeddings.T
+            component_candidate_list.append((float(subcomponent_scores.max()), component_loc))
+
+        component_candidate_list.sort(key=lambda x: x[0], reverse=True)
+        beam_component_ids: tp.List[UniqueID] = [
+            self.fif_graph.component_loc_to_id_map[item[1]]
+            for item in component_candidate_list[:ctx.beam_size]
+        ]
 
         memory_unit: FiFMemoryUnit = FiFMemoryUnit()
-        memory_unit.component_id_list = distinct_component_ids
+        memory_unit.component_id_list = beam_component_ids
 
         ctx.fif_memory.add_new_history(memory_unit)
         return len(memory_unit.component_id_list) > 0
 
-    def one_hop(self, ctx: LILaCTraversalContext) -> bool:
+    def one_hop(self, ctx: FiFTraversalContext) -> bool:
         candidate_edge_dict: tp.Dict[tp.FrozenSet[UniqueID], float] = dict()
         component_unique_id_list: tp.List[UniqueID] = self.get_component_unique_id_list(ctx, ctx.beam_size)
         for component_unique_id in component_unique_id_list:
             component_data: FiFComponent = self.fif_graph.get_component_from_unique_id(component_unique_id)
             neighbor_id_list: tp.List[UniqueID] = []
 
-            # Intra-document edges: all other components in the same document (paper Eq. 1)
+            # intra-document edges
             same_doc: FiFDocument = self.fif_graph.get_document_from_unique_id(component_unique_id)
             for comp_key in same_doc.component_dict:
-                if comp_key != component_unique_id[1]:
-                    neighbor_id_list.append((component_unique_id[0], comp_key, None))
+                neighbor_id_list.append((component_unique_id[0], comp_key, None))
 
-            # Inter-document edges: components from linked documents (paper Eq. 2)
+            # inter-document edges
             for linked_doc_uid in component_data.linked_document_uid_list:
                 if linked_doc_uid[0] not in self.fif_graph.doc_title_to_loc_map:
                     continue
@@ -74,11 +61,11 @@ class LILaCTraverser:
             if not neighbor_id_list:
                 candidate_edge_dict[frozenset([component_unique_id])] = self._calculate_maxsim_score(ctx, component_unique_id)
                 continue
-            
+
             for neighbor_id in neighbor_id_list:
                 candidate_edge = frozenset([component_unique_id, neighbor_id])
                 if candidate_edge in candidate_edge_dict: continue
-                
+
                 candidate_edge_score = self._calculate_maxsim_score(ctx, component_unique_id, neighbor_id)
                 component1_single_score = self._calculate_maxsim_score(ctx, component_unique_id)
                 component2_single_score = self._calculate_maxsim_score(ctx, neighbor_id)
@@ -94,7 +81,13 @@ class LILaCTraverser:
         new_component_id_list: tp.List[UniqueID] = []
         seen: tp.Set[UniqueID] = set()
         for component_id_set, _ in sorted_candidate_edge_list:
-            for cid in component_id_set:
+            nodes_in_edge = list(component_id_set)
+            if len(nodes_in_edge) > 1:
+                nodes_in_edge.sort(
+                    key=lambda cid: self._calculate_maxsim_score(ctx, cid),
+                    reverse=True
+                )
+            for cid in nodes_in_edge:
                 if cid not in seen:
                     seen.add(cid)
                     new_component_id_list.append(cid)
@@ -107,7 +100,7 @@ class LILaCTraverser:
         ctx.fif_memory.add_new_history(memory_unit)
         return old_component_id_list != new_component_id_list[:ctx.beam_size]
 
-    def multi_hop(self, ctx: LILaCTraversalContext, max_hop: int) -> None:
+    def multi_hop(self, ctx: FiFTraversalContext, max_hop: int) -> None:
         ctx.hop_count = 0
         while ctx.hop_count < max_hop:
             changed = self.one_hop(ctx)
@@ -116,7 +109,7 @@ class LILaCTraverser:
     
     def _calculate_maxsim_score(
         self,
-        ctx: LILaCTraversalContext,
+        ctx: FiFTraversalContext,
         component1_id: UniqueID,
         component2_id: tp.Optional[UniqueID] = None
     ) -> float:
@@ -135,6 +128,6 @@ class LILaCTraverser:
         sim_matrix = ctx.subquery_embeddings @ combined_subembeddings.T
         return float(np.sum(np.max(sim_matrix, axis=1)))
 
-    def get_component_unique_id_list(self, ctx: LILaCTraversalContext, top_k: int) -> tp.List[UniqueID]:
+    def get_component_unique_id_list(self, ctx: FiFTraversalContext, top_k: int) -> tp.List[UniqueID]:
         assert ctx.fif_memory.history
         return ctx.fif_memory.history[-1].component_id_list[:top_k]

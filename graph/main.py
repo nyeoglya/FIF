@@ -1,8 +1,9 @@
 import asyncio
 
 from download import FiFDatasetLoader
+from memory import FiFMemory
 from graph import FiFGraph
-from lilac import LILaCTraversalContext, LILaCTraverser
+from lilac import LILaCTraverser
 from preprocessor import (
     LLMQuerySerializer,
     DocumentSummarizer,
@@ -19,6 +20,7 @@ from config import (
     MMCOQA_IMAGE_DESCRIPTION_FILEPATH, MMCOQA_IMAGE_DESCRIPTION_FAILED_FILEPATH,
     MMCOQA_OBJECT_DETECTION_FILEPATH, MMCOQA_OBJECT_DETECTION_FAILED_FILEPATH,
     MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH, MMCOQA_DOCUMENT_EMBEDDING_FAILED_FILEPATH,
+    MMCOQA_DEV_EMBEDDING_CACHE_FILEPATH,
     QWEN_SERVER_URL_LIST, MMEMBED_SERVER_URL_LIST,
     TOP_K, BEAM_SIZE, MAX_HOP
 )
@@ -76,41 +78,46 @@ def preprocess_main():
     # ))
     
     '''MM-Embed Evaluation'''
-    verify_embedding(MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH)
-    asyncio.run(
-        embedding_evaluation(
-            MMEMBED_SERVER_URL_LIST[0],
-            MMCOQA_RESTORE_DEV_FILEPATH,
-            MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
-            TOP_K
-        )
-    )
+    # verify_embedding(MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH)
+    # asyncio.run(
+    #     embedding_evaluation(
+    #         MMEMBED_SERVER_URL_LIST[0],
+    #         MMCOQA_RESTORE_DEV_FILEPATH,
+    #         MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
+    #         TOP_K
+    #     )
+    # )
     
     '''FiF Graph Construction'''
-    fif_graph: FiFGraph = FiFGraph.construct_graph(
-        MMCOQA_RESTORE_FOLDERPATH,
-        MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
-        MMCOQA_DOCUMENT_SUMMARIZATION_FILEPATH
-    )
+    # fif_graph: FiFGraph = FiFGraph.construct_graph(
+    #     MMCOQA_RESTORE_FOLDERPATH,
+    #     MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
+    #     MMCOQA_DOCUMENT_SUMMARIZATION_FILEPATH
+    # )
     
-    FiFGraph.save(fif_graph, "mmcoqa")
+    # FiFGraph.save(fif_graph, "mmcoqa")
 
 def process_main():
     fif_graph: FiFGraph = FiFGraph.load("mmcoqa")
     
     '''LILaC Graph Traverse Evaluation'''
-    asyncio.run(
-        lilac_retrieval_evaluation(
-            fif_graph,
-            QWEN_SERVER_URL_LIST[0],
-            MMEMBED_SERVER_URL_LIST[0],
-            MMCOQA_RESTORE_DEV_FILEPATH,
-            BEAM_SIZE, TOP_K, MAX_HOP
-        )
-    )
+    # asyncio.run(
+    #     lilac_retrieval_evaluation(
+    #         fif_graph,
+    #         QWEN_SERVER_URL_LIST[0],
+    #         MMEMBED_SERVER_URL_LIST[0],
+    #         MMCOQA_RESTORE_DEV_FILEPATH,
+    #         BEAM_SIZE, TOP_K, MAX_HOP,
+    #         MMCOQA_DEV_EMBEDDING_CACHE_FILEPATH
+    #     )
+    # )
     
     '''FiF Graph Traverse Orchestrator''' # TODO
-    fif_orchestrator: FiFOrchestrator = FiFOrchestrator()
+    from memory import FiFTraversalContext
+    from typing import cast
+
+    fif_orchestrator: FiFOrchestrator = FiFOrchestrator(fif_graph, QWEN_SERVER_URL_LIST[0])
+    fif_orchestrator.one_hop(cast(FiFTraversalContext, None)) # TODO: temp
     
     '''FiF Graph Traverse Evaluation''' # TODO
     
@@ -120,5 +127,5 @@ def process_main():
 
 
 if __name__ == "__main__":
-    preprocess_main()
+    # preprocess_main()
     process_main()

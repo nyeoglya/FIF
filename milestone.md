@@ -1,9 +1,5 @@
-1. document summarization & embedding => In Progress
-- Summarization => In Progress
-- Embedding => Current Working
-
 2. structured memory configuration => Current Working
-- history((action, anchor doc, comp, subquery, ) list)
+- history((action, anchor doc, comp, subquery) list)
 
 3. traverser: want to find subquery q-relevant component
 - hop

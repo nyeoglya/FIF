@@ -48,6 +48,8 @@ class FiFGraph:
         self.document_list: list[FiFDocument] = []
         self.component_loc_to_id_map: list[UniqueID] = []
         self.doc_title_to_loc_map: dict[str, int] = dict()
+        self.subcomponent_embeddings: NDArray[np.float32] = np.array([])
+        self.subcomponent_to_component_map: list[UniqueID] = []
 
     def get_document_from_unique_id(self, unique_id: UniqueID):
         doc_loc: int = self.doc_title_to_loc_map[unique_id[0]]
@@ -71,6 +73,8 @@ class FiFGraph:
 
         new_graph = FiFGraph()
         temp_component_embedding_list: list[NDArray[np.float32]] = []
+        temp_subcomponent_embedding_list: list[NDArray[np.float32]] = []
+        temp_subcomponent_to_component_map: list[UniqueID] = []
 
         embedding_folder = Path(embedding_folderpath)
         embedding_filepaths = sorted(embedding_folder.glob("*.npz"))
@@ -104,12 +108,17 @@ class FiFGraph:
                         FiFSubComponent((doc_title, key_data, str(i)), emb)
                         for i, emb in enumerate(subcomponent_embeddings)
                     ]
+                    for emb in subcomponent_embeddings:
+                        temp_subcomponent_embedding_list.append(emb)
+                        temp_subcomponent_to_component_map.append(component_uid)
                     new_document.component_dict[key_data] = new_component
 
                 new_graph.doc_title_to_loc_map[doc_title] = len(new_graph.document_list)
                 new_graph.document_list.append(new_document)
 
         new_graph.component_embeddings = np.array(temp_component_embedding_list)
+        new_graph.subcomponent_embeddings = np.array(temp_subcomponent_embedding_list) if temp_subcomponent_embedding_list else np.array([])
+        new_graph.subcomponent_to_component_map = temp_subcomponent_to_component_map
         return new_graph
 
     @staticmethod
@@ -148,14 +157,17 @@ class FiFGraph:
             "component_id_map": [list(uid) for uid in graph.component_loc_to_id_map],
             "doc_title_to_loc_map": graph.doc_title_to_loc_map,
             "documents": documents_json,
+            "subcomponent_to_component_map": [list(uid) for uid in graph.subcomponent_to_component_map],
         }
 
         with open(base.with_suffix(".json"), "w", encoding="utf-8") as f:
             json.dump(graph_json, f, ensure_ascii=False)
+
         np.savez(
             base.with_suffix(".npz"),
             node_embeddings=np.array(node_embeddings),
             component_embeddings=graph.component_embeddings,
+            subcomponent_embeddings=graph.subcomponent_embeddings,
         )
 
     @staticmethod
@@ -170,6 +182,8 @@ class FiFGraph:
         graph.component_loc_to_id_map = [tuple(uid) for uid in graph_json["component_id_map"]]
         graph.doc_title_to_loc_map = graph_json["doc_title_to_loc_map"]
         graph.component_embeddings = npz_data["component_embeddings"]
+        graph.subcomponent_embeddings = npz_data["subcomponent_embeddings"] if "subcomponent_embeddings" in npz_data else np.array([])
+        graph.subcomponent_to_component_map = [tuple(uid) for uid in graph_json.get("subcomponent_to_component_map", [])]
 
         for doc_data in tqdm(graph_json["documents"], desc="Loading Graph"):
             doc = FiFDocument(tuple(doc_data["unique_id"]), node_embeddings[doc_data["emb_idx"]])

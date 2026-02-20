@@ -26,36 +26,27 @@ class LILaCTraverser:
 
     def find_entry(self, ctx: LILaCTraversalContext) -> bool:
         ctx.fif_memory.reset_memory()
-        
-        component_scores: NDArray[np.float32] = self.fif_graph.component_embeddings @ ctx.query_embedding.T
-        top_k_coarse: int = min(2048, len(component_scores))
-        top_indices = np.argsort(-component_scores, axis=0)[:top_k_coarse]
-        
-        component_candidate_list: tp.List[tp.Tuple[float, int]] = []
-        for component_id in top_indices:
-            component_unique_id: UniqueID = self.fif_graph.component_loc_to_id_map[int(component_id)]
-            doc_loc: int = self.fif_graph.doc_title_to_loc_map[component_unique_id[0]]
-            document_data: FiFDocument = self.fif_graph.document_list[doc_loc]
-            
-            component_key: tp.Optional[str] = component_unique_id[1]
-            if component_key is None or component_key not in document_data.component_dict: continue
-            target_component: FiFComponent = document_data.component_dict[component_key]
-            if not target_component.subcomponent_list: continue
 
-            sub_embs: NDArray[np.float32] = np.array([sub.embedding for sub in target_component.subcomponent_list])
-            sim_matrix: NDArray[np.float32] = ctx.subquery_embeddings @ sub_embs.T
-            li_score: float = float(np.sum(np.max(sim_matrix, axis=1)))
-            
-            component_candidate_list.append((li_score, component_id))
-        
-        component_candidate_list.sort(key=lambda x: x[0], reverse=True)
-        
+        # Low-level k-NN: search subcomponent embeddings, then map to component IDs
+        # This matches gold_retriever.py's approach (no late interaction at this stage)
+        subcomp_scores: NDArray[np.float32] = self.fif_graph.subcomponent_embeddings @ ctx.query_embedding.T
+        top_k_low: int = min(2048, len(subcomp_scores))
+        top_indices = np.argsort(-subcomp_scores, axis=0)[:top_k_low]
+
+        # Map low-level results to component UniqueIDs, keeping first beam_size distinct
+        seen: tp.Set[UniqueID] = set()
+        distinct_component_ids: tp.List[UniqueID] = []
+        for idx in top_indices:
+            component_uid: UniqueID = self.fif_graph.subcomponent_to_component_map[int(idx)]
+            if component_uid not in seen:
+                seen.add(component_uid)
+                distinct_component_ids.append(component_uid)
+                if len(distinct_component_ids) >= ctx.beam_size:
+                    break
+
         memory_unit: FiFMemoryUnit = FiFMemoryUnit()
-        memory_unit.component_id_list = [
-            self.fif_graph.component_loc_to_id_map[item[1]] 
-            for item in component_candidate_list[:ctx.beam_size]
-        ]
-        
+        memory_unit.component_id_list = distinct_component_ids
+
         ctx.fif_memory.add_new_history(memory_unit)
         return len(memory_unit.component_id_list) > 0
 
@@ -65,10 +56,21 @@ class LILaCTraverser:
         for component_unique_id in component_unique_id_list:
             component_data: FiFComponent = self.fif_graph.get_component_from_unique_id(component_unique_id)
             neighbor_id_list: tp.List[UniqueID] = []
+
+            # Intra-document edges: all other components in the same document (paper Eq. 1)
+            same_doc: FiFDocument = self.fif_graph.get_document_from_unique_id(component_unique_id)
+            for comp_key in same_doc.component_dict:
+                if comp_key != component_unique_id[1]:
+                    neighbor_id_list.append((component_unique_id[0], comp_key, None))
+
+            # Inter-document edges: components from linked documents (paper Eq. 2)
             for linked_doc_uid in component_data.linked_document_uid_list:
+                if linked_doc_uid[0] not in self.fif_graph.doc_title_to_loc_map:
+                    continue
                 linked_doc: FiFDocument = self.fif_graph.get_document_from_unique_id(linked_doc_uid)
                 for component_key in linked_doc.component_dict:
                     neighbor_id_list.append((linked_doc_uid[0], component_key, None))
+
             if not neighbor_id_list:
                 candidate_edge_dict[frozenset([component_unique_id])] = self._calculate_maxsim_score(ctx, component_unique_id)
                 continue

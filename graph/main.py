@@ -76,24 +76,24 @@ def preprocess_main():
     # ))
     
     '''MM-Embed Evaluation'''
-    # verify_embedding(MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH)
-    # asyncio.run(
-    #     embedding_evaluation(
-    #         MMEMBED_SERVER_URL_LIST[0],
-    #         MMCOQA_RESTORE_DEV_FILEPATH,
-    #         MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
-    #         TOP_K
-    #     )
-    # )
+    verify_embedding(MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH)
+    asyncio.run(
+        embedding_evaluation(
+            MMEMBED_SERVER_URL_LIST[0],
+            MMCOQA_RESTORE_DEV_FILEPATH,
+            MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
+            TOP_K
+        )
+    )
     
     '''FiF Graph Construction'''
-    # fif_graph: FiFGraph = FiFGraph.construct_graph(
-    #     MMCOQA_RESTORE_FOLDERPATH,
-    #     MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
-    #     MMCOQA_DOCUMENT_SUMMARIZATION_FILEPATH
-    # )
+    fif_graph: FiFGraph = FiFGraph.construct_graph(
+        MMCOQA_RESTORE_FOLDERPATH,
+        MMCOQA_DOCUMENT_EMBEDDING_FOLDERPATH,
+        MMCOQA_DOCUMENT_SUMMARIZATION_FILEPATH
+    )
     
-    # FiFGraph.save(fif_graph, "mmcoqa")
+    FiFGraph.save(fif_graph, "mmcoqa")
 
 def process_main():
     fif_graph: FiFGraph = FiFGraph.load("mmcoqa")
@@ -120,5 +120,5 @@ def process_main():
 
 
 if __name__ == "__main__":
-    # preprocess_main()
+    preprocess_main()
     process_main()

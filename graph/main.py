@@ -27,6 +27,8 @@ from config import (
 from agent import FiFOrchestrator
 
 def preprocess_main():
+    print("Start Pre-processing...")
+    
     '''Dataset Download + Load (From Huggingface)'''
     # mmcoqa_doc_dataset_loader = FiFDatasetLoader(
     #     dataset_name="JoohyungYun/mmcoqa_doc",
@@ -98,9 +100,11 @@ def preprocess_main():
     # FiFGraph.save(fif_graph, "mmcoqa")
 
 def process_main():
+    print("Start Processing...")
+    
     fif_graph: FiFGraph = FiFGraph.load("mmcoqa")
     
-    '''LILaC Graph Traverse Evaluation'''
+    '''LILaC Retrieval Evaluation'''
     # asyncio.run(
     #     lilac_retrieval_evaluation(
     #         fif_graph,
@@ -114,12 +118,31 @@ def process_main():
     
     '''FiF Graph Traverse Orchestrator''' # TODO
     from memory import FiFTraversalContext
-    from typing import cast
-
-    fif_orchestrator: FiFOrchestrator = FiFOrchestrator(fif_graph, QWEN_SERVER_URL_LIST[0])
-    fif_orchestrator.one_hop(cast(FiFTraversalContext, None)) # TODO: temp
+    from client import request_subqueries, request_subqueries_embedding
     
-    '''FiF Graph Traverse Evaluation''' # TODO
+    fif_orchestrator: FiFOrchestrator = FiFOrchestrator(
+        fif_graph,
+        QWEN_SERVER_URL_LIST[0],
+        MMEMBED_SERVER_URL_LIST[0]
+    )
+    query = "What sports is the Ben Piazza 1976 movie title?"
+    subqueries = asyncio.run(request_subqueries(QWEN_SERVER_URL_LIST[0], query))
+    subquery_embeddings = asyncio.run(request_subqueries_embedding(QWEN_SERVER_URL_LIST[0], MMEMBED_SERVER_URL_LIST[0], query, subqueries))
+    ctx = FiFTraversalContext()
+    ctx.fif_memory.reset_memory(query, subqueries, subquery_embeddings)
+    fif_orchestrator.one_hop(ctx)
+    
+    '''FiF Retrieval Evaluation''' # TODO
+    # asyncio.run(
+    #     fif_retrieval_evaluation(
+    #         fif_graph,
+    #         QWEN_SERVER_URL_LIST[0],
+    #         MMEMBED_SERVER_URL_LIST[0],
+    #         MMCOQA_RESTORE_DEV_FILEPATH,
+    #         BEAM_SIZE, TOP_K, MAX_HOP,
+    #         MMCOQA_DEV_EMBEDDING_CACHE_FILEPATH
+    #     )
+    # )
     
     '''LLM Answer Generation''' # TODO
     

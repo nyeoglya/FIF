@@ -17,10 +17,8 @@ class FiFNode:
         self.unique_id: UniqueID = unique_id
         self.embedding: NDArray[np.float32] = embedding
 
-
 class FiFSubComponent(FiFNode):
     pass
-
 
 class FiFComponent(FiFNode):
     def __init__(self, unique_id: UniqueID, embedding: NDArray[np.float32]) -> None:
@@ -40,7 +38,6 @@ class FiFDocument(FiFNode):
         super().__init__(unique_id, embedding)
         self.document_summary: str = ""
         self.component_dict: dict[str, FiFComponent] = {}
-
 
 class FiFGraph:
     def __init__(self) -> None:

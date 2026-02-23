@@ -137,7 +137,7 @@ async def lilac_retrieval_evaluation(
             
             ctx: FiFTraversalContext = FiFTraversalContext(
                 query_embedding=query_embedding,
-                subquery_embeddings=subquery_embeddings, # TODO: better performance when uses query_embedding[None, :]...
+                current_subquery_embeddings=subquery_embeddings, # TODO: better performance when uses query_embedding[None, :]...
                 beam_size=beam_size
             )
             lilac_traverser.find_entry(ctx)

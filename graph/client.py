@@ -54,13 +54,16 @@ async def request_query_embedding(server_url: str, instruction: str, query_text:
     res.raise_for_status()
     return np.array(res.json()["embedding"], dtype=np.float32)
 
-async def request_subqueries_embedding(llm_server_url: str, embedding_server_url: str, query: str) -> NDArray[np.float32]:
-    llm_response = await request_llm_response(llm_server_url, SUBQUERY_DIVIDE_QUERY.format(query=query))
-    subqueries = llm_response.replace("\n", "").split(";")
+async def request_subqueries(llm_server_url: str, query: str) -> list[str]:
+    llm_response: str = await request_llm_response(llm_server_url, SUBQUERY_DIVIDE_QUERY.format(query=query))
+    subqueries: list[str] = [subquery.strip() for subquery in llm_response.replace("\n", "").split(";")]
+    return subqueries
+
+async def request_subqueries_embedding(llm_server_url: str, embedding_server_url: str, query: str, subqueries: list[str] = []) -> NDArray[np.float32]:
+    subqueries = await request_subqueries(llm_server_url, query) if not subqueries else subqueries
     embeddings: list[NDArray[np.float32]] = []
     
     for subquery in subqueries:
-        subquery = subquery.strip()
         if not subquery: continue
         
         modality = await request_llm_response(llm_server_url, SUBQUERY_MODALITY_QUERY.format(subquery=subquery))

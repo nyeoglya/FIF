@@ -23,7 +23,7 @@ class LILaCTraverser:
             component: FiFComponent = self.fif_graph.get_component_from_unique_id(component_uid)
             subcomponent_embeddings: NDArray[np.float32] = component.get_subcomponent_embeddings()
             if subcomponent_embeddings.size == 0: continue
-            subcomponent_scores = subcomponent_embeddings @ ctx.subquery_embeddings.T
+            subcomponent_scores = subcomponent_embeddings @ ctx.current_subquery_embeddings.T
             component_candidate_list.append((float(subcomponent_scores.max()), component_loc))
 
         component_candidate_list.sort(key=lambda x: x[0], reverse=True)
@@ -32,9 +32,7 @@ class LILaCTraverser:
             for item in component_candidate_list[:ctx.beam_size]
         ]
 
-        memory_unit: FiFMemoryUnit = FiFMemoryUnit()
-        memory_unit.component_id_list = beam_component_ids
-
+        memory_unit: FiFMemoryUnit = FiFMemoryUnit(component_id_list=beam_component_ids)
         ctx.fif_memory.add_new_history(memory_unit)
         return len(memory_unit.component_id_list) > 0
 
@@ -95,9 +93,9 @@ class LILaCTraverser:
                 break
 
         old_component_id_list = ctx.fif_memory.get_last_unit().component_id_list
-        memory_unit: FiFMemoryUnit = FiFMemoryUnit()
-        memory_unit.component_id_list = new_component_id_list[:ctx.beam_size]
-        ctx.fif_memory.add_new_history(memory_unit)
+        ctx.fif_memory.add_new_history(
+            FiFMemoryUnit(component_id_list = new_component_id_list[:ctx.beam_size])
+        )
         return old_component_id_list != new_component_id_list[:ctx.beam_size]
 
     def multi_hop(self, ctx: FiFTraversalContext, max_hop: int) -> None:
@@ -125,7 +123,7 @@ class LILaCTraverser:
 
         if combined_subembeddings.size == 0: return -1.0
 
-        sim_matrix = ctx.subquery_embeddings @ combined_subembeddings.T
+        sim_matrix = ctx.current_subquery_embeddings @ combined_subembeddings.T
         return float(np.sum(np.max(sim_matrix, axis=1)))
 
     def get_component_unique_id_list(self, ctx: FiFTraversalContext, top_k: int) -> tp.List[UniqueID]:

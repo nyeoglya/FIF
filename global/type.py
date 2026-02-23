@@ -1,9 +1,10 @@
 import typing as tp
 
 JSONDict = tp.Dict[str, tp.Any]
+SerializedData = tp.Tuple[str, tp.List[str]]
 SerializedDataForEmbeding = tp.Tuple[str, str, tp.Optional[tp.Tuple[int, int, int, int]]]
 UniqueID = tp.Tuple[str, tp.Optional[str], tp.Optional[str]]
-Strategy = tp.Tuple[tp.Any, tp.Any, tp.Any]
+Strategy = tp.Tuple[str, str, str] # document_search_mode, component_search_mode, vector_granularity
 
 T = tp.TypeVar("T", bound=tp.Type[tp.Any])
 

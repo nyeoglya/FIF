@@ -604,8 +604,7 @@ Inputs:
 # Subtask status (1-based index; include current status if any)
 {subtasks}
 
-Output:
-"""
+Output: """
 
 RERANKER_PROMPT = """You are a reranking assistant for retrieval.
 Task: Given a user query and a list of candidate components, select and rank the TOP-{top_k} candidates by how directly useful they are for answering the user query.
